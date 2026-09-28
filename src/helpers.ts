@@ -143,8 +143,12 @@ export const getContentType = (
   return null;
 };
 
-export const serializeBody = (body: unknown) => {
+export const serializeBody = (body: unknown): BodyInit | null => {
   if (body == null) return null;
+
+  if (ArrayBuffer.isView(body)) {
+    return body as ArrayBufferView<ArrayBuffer>;
+  }
 
   if (
     body instanceof FormData ||
@@ -152,7 +156,6 @@ export const serializeBody = (body: unknown) => {
     body instanceof Blob ||
     body instanceof ArrayBuffer ||
     body instanceof ReadableStream ||
-    ArrayBuffer.isView(body) ||
     typeof body === "string"
   ) {
     return body;

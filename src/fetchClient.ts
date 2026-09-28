@@ -107,7 +107,7 @@ class FetchClient {
       requestHeaders.set("Content-Type", contentType);
     }
 
-    const serializedBody = serializeBody(body) as any;
+    const serializedBody = serializeBody(body);
     const timeoutSignal = timeout ? AbortSignal.timeout(timeout) : undefined;
 
     let rawResponse: Response;
