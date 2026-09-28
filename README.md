@@ -120,7 +120,7 @@ try {
 - 요청 중이든 재시도 대기 중이든 즉시 중단됩니다.
 - `ABORT_ERROR`는 재시도하지 않고, `onRequestError`와 `onResponseError` 훅도 호출하지 않습니다.
 
-### 리트라이
+### 재시도
 
 ```typescript
 const client = new FetchClient({
@@ -193,33 +193,6 @@ const client = new FetchClient({
 ```
 
 `shouldRetry`를 지정하면 기본 규칙(메서드, 상태 코드, 네트워크 오류)을 대체하므로, 다른 재시도 조건이 필요하면 함께 적어야 합니다.
-
-## 💡 기술적 하이라이트
-
-### 자동 Content-Type 추론
-
-```typescript
-FormData        → multipart/form-data (브라우저 자동 설정)
-URLSearchParams → application/x-www-form-urlencoded
-Blob            → blob.type 또는 application/octet-stream
-object          → application/json
-string          → text/plain
-```
-
-### 안전한 응답 파싱
-
-- 204 No Content, Content-Length: 0 → `null` 반환
-- 상태 코드를 먼저 확인하므로, HTML 에러 페이지를 주는 502 같은 응답도 `HTTP_ERROR`로 분류
-- JSON 파싱 실패 시 `PARSE_ERROR`와 상세 에러 메시지 제공
-
-### 설정 병합
-
-- 요청 헤더가 클라이언트 기본 헤더보다 우선합니다.
-- `baseURL`의 경로를 유지합니다. `https://api.example.com/v1`에서 `/users`를 요청하면 `https://api.example.com/v1/users`가 됩니다.
-
-### Hook 체이닝
-
-여러 Hook이 순차 실행되며, 각 Hook의 결과가 다음 Hook으로 전달됩니다.
 
 ## 📁 프로젝트 구조
 
