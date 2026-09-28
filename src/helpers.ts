@@ -1,6 +1,8 @@
 import FetchClientError from "./fetchClientError";
+import { mergeRetryOptions } from "./retry";
 import {
   FetchClientConfig,
+  FetchClientMergedConfig,
   FetchClientRequestOptions,
   ResponseType,
 } from "./types";
@@ -31,17 +33,24 @@ const mergeHeaders = (...headrsList: (HeadersInit | undefined)[]) => {
 
 export const mergeConfig = (
   requestOptions: FetchClientRequestOptions,
-  defaultConfig: FetchClientConfig
-) => {
+  defaultConfig: FetchClientConfig,
+): FetchClientMergedConfig => {
   return {
     ...defaultConfig,
     ...requestOptions,
-    headers: mergeHeaders(requestOptions.headers, defaultConfig.headers),
+    headers: mergeHeaders(defaultConfig.headers, requestOptions.headers),
+    retry: mergeRetryOptions(defaultConfig.retry, requestOptions.retry),
   };
 };
 
 const isAbsoluteURL = (url: string) => {
   return url.startsWith("https://") || url.startsWith("http://");
+};
+
+const joinURL = (baseURL: string, path: string) => {
+  if (!path) return baseURL;
+
+  return `${baseURL.replace(/\/+$/, "")}/${path.replace(/^\/+/, "")}`;
 };
 
 const defaultSerializeParams = (params: Record<string, unknown>): string => {
@@ -64,20 +73,22 @@ export const buildFullURL = (
   requestURL: string,
   baseURL?: string,
   params?: URLSearchParams | Record<string, unknown>,
-  paramsSerializer?: (params: Record<string, unknown>) => string
+  paramsSerializer?: (params: Record<string, unknown>) => string,
 ) => {
   try {
-    const fullURL = isAbsoluteURL(requestURL)
-      ? new URL(requestURL)
-      : new URL(requestURL, baseURL);
+    const fullURL = new URL(
+      isAbsoluteURL(requestURL) || !baseURL
+        ? requestURL
+        : joinURL(baseURL, requestURL),
+    );
 
     if (params) {
       const newSearchParamsString =
         params instanceof URLSearchParams
           ? params.toString()
           : !!paramsSerializer
-          ? paramsSerializer(params)
-          : defaultSerializeParams(params);
+            ? paramsSerializer(params)
+            : defaultSerializeParams(params);
 
       const newParams = new URLSearchParams(newSearchParamsString);
       newParams.forEach((value, key) => {
@@ -92,14 +103,14 @@ export const buildFullURL = (
       "URL_BUILD_ERROR",
       undefined,
       undefined,
-      { cause: error }
+      { cause: error },
     );
   }
 };
 
 export const getContentType = (
   body: unknown,
-  headers: Headers
+  headers: Headers,
 ): string | null => {
   if (headers.has("Content-Type") || body == null || body instanceof FormData) {
     return null;
@@ -156,7 +167,7 @@ export const serializeBody = (body: unknown) => {
 
 export const parseResponse = async (
   response: Response,
-  responseType: ResponseType
+  responseType: ResponseType,
 ): Promise<unknown> => {
   const contentLength = response.headers.get("content-length");
   if (response.status === 204 || contentLength === "0") {
@@ -169,8 +180,14 @@ export const parseResponse = async (
 
     try {
       return JSON.parse(text);
-    } catch {
-      throw new Error(`Failed to parse JSON response: ${text.slice(0, 100)}`);
+    } catch (error) {
+      throw new FetchClientError(
+        `Failed to parse JSON response: ${text.slice(0, 100)}`,
+        "PARSE_ERROR",
+        response,
+        response.status,
+        { cause: error },
+      );
     }
   }
 
@@ -186,4 +203,68 @@ export const parseResponse = async (
     default:
       return await response.text();
   }
+};
+
+export const readErrorBody = async (response: Response): Promise<unknown> => {
+  try {
+    const text = await response.text();
+    if (!text) return null;
+
+    try {
+      return JSON.parse(text);
+    } catch {
+      return text;
+    }
+  } catch {
+    return null;
+  }
+};
+
+export const combineSignals = (
+  ...signals: (AbortSignal | null | undefined)[]
+): AbortSignal | undefined => {
+  const activeSignals = signals.filter(
+    (signal): signal is AbortSignal => !!signal,
+  );
+  if (activeSignals.length <= 1) return activeSignals[0];
+
+  return AbortSignal.any(activeSignals);
+};
+
+export const toRequestError = (
+  error: unknown,
+  userSignal?: AbortSignal | null,
+  timeoutSignal?: AbortSignal,
+): FetchClientError => {
+  if (userSignal?.aborted) {
+    if (error instanceof FetchClientError && error.type === "ABORT_ERROR") {
+      return error;
+    }
+
+    return new FetchClientError(
+      "요청이 취소되었습니다.",
+      "ABORT_ERROR",
+      undefined,
+      undefined,
+      { cause: userSignal.reason },
+    );
+  }
+
+  if (timeoutSignal?.aborted) {
+    return new FetchClientError(
+      "요청 시간이 초과되었습니다.",
+      "TIMEOUT_ERROR",
+      undefined,
+      undefined,
+      { cause: timeoutSignal.reason },
+    );
+  }
+
+  return new FetchClientError(
+    "네트워크 오류가 발생했습니다.",
+    "NETWORK_ERROR",
+    undefined,
+    undefined,
+    { cause: error },
+  );
 };

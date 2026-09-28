@@ -9,6 +9,7 @@ class FetchClientError extends Error {
     options?: ErrorOptions
   ) {
     super(message, options);
+    this.name = "FetchClientError";
     this.type = type;
     this.response = response;
     this.status = status;

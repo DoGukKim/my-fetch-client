@@ -1,4 +1,9 @@
-import { FetchClientHooks, FetchClientMergedConfig } from "./types";
+import type FetchClientError from "./fetchClientError";
+import {
+  FetchClientHooks,
+  FetchClientMergedConfig,
+  RetryContext,
+} from "./types";
 
 class FetchClientHookRunner {
   constructor(private readonly hooks: FetchClientHooks = {}) {}
@@ -30,8 +35,16 @@ class FetchClientHookRunner {
     return interceptedResponse;
   }
 
+  async runBeforeRetry(context: RetryContext): Promise<void> {
+    if (!this.hooks.beforeRetry) return;
+
+    for (const hook of this.hooks.beforeRetry) {
+      await hook(context);
+    }
+  }
+
   async runOnResponseError(
-    error: Error,
+    error: FetchClientError,
     response: Response,
     config: FetchClientMergedConfig
   ): Promise<void> {

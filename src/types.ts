@@ -1,7 +1,11 @@
+import type FetchClientError from "./fetchClientError";
+
 export interface FetchClientConfig {
   baseURL?: string;
   headers?: HeadersInit;
   hooks?: FetchClientHooks;
+  timeout?: number | false;
+  retry?: number | false | RetryOptions;
 }
 
 export type ResponseType =
@@ -25,15 +29,38 @@ export interface FetchClientRequestOptions<TBody = unknown>
   responseType?: ResponseType;
   params?: URLSearchParams | Record<string, unknown>;
   paramsSerializer?: (params: Record<string, unknown>) => string;
+  timeout?: number | false;
+  retry?: number | false | RetryOptions;
 }
-export type FetchClientMergedConfig = FetchClientConfig &
-  FetchClientRequestOptions;
+export type FetchClientMergedConfig = Omit<
+  FetchClientConfig & FetchClientRequestOptions,
+  "headers"
+> & {
+  headers: Headers;
+};
 
 export type FetchClientErrorType =
   | "URL_BUILD_ERROR"
   | "HTTP_ERROR"
   | "NETWORK_ERROR"
-  | "TIMEOUT_ERROR";
+  | "TIMEOUT_ERROR"
+  | "ABORT_ERROR"
+  | "PARSE_ERROR";
+
+export interface RetryOptions {
+  limit?: number;
+  methods?: RequestMethod[];
+  statusCodes?: number[];
+  delay?: (attempt: number) => number;
+  maxDelay?: number;
+  shouldRetry?: (context: RetryContext) => boolean | Promise<boolean>;
+}
+
+export interface RetryContext {
+  error: FetchClientError;
+  attempt: number;
+  config: FetchClientMergedConfig;
+}
 
 export interface FetchClientHooks {
   beforeRequest?: ((
@@ -43,13 +70,14 @@ export interface FetchClientHooks {
     response: Response,
     config: FetchClientMergedConfig
   ) => Response | Promise<Response>)[];
+  beforeRetry?: ((context: RetryContext) => void | Promise<void>)[];
   onResponseError?: ((
-    error: Error,
+    error: FetchClientError,
     response: Response,
     config: FetchClientMergedConfig
-  ) => Promise<void>)[];
+  ) => void | Promise<void>)[];
   onRequestError?: ((
     error: Error,
     config: FetchClientMergedConfig
-  ) => Promise<void>)[];
+  ) => void | Promise<void>)[];
 }

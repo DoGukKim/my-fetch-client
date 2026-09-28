@@ -19,4 +19,6 @@ export type {
   FetchClientMergedConfig,
   FetchClientErrorType,
   FetchClientHooks,
+  RetryOptions,
+  RetryContext,
 } from "./types";
