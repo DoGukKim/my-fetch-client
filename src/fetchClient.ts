@@ -2,13 +2,14 @@ import FetchClientError from "./fetchClientError";
 import FetchClientHookRunner from "./fetchClienthookRunner";
 import {
   buildFullURL,
+  buildRequest,
   mergeConfig,
   getContentType,
-  serializeBody,
   parseResponse,
   readErrorBody,
   combineSignals,
   toRequestError,
+  toParseError,
 } from "./helpers";
 import {
   getRetryDelay,
@@ -107,17 +108,17 @@ class FetchClient {
       requestHeaders.set("Content-Type", contentType);
     }
 
-    const serializedBody = serializeBody(body);
     const timeoutSignal = timeout ? AbortSignal.timeout(timeout) : undefined;
+    const request = buildRequest(fullURL, {
+      ...restConfig,
+      body,
+      headers: requestHeaders,
+      signal: combineSignals(signal, timeoutSignal),
+    });
 
     let rawResponse: Response;
     try {
-      rawResponse = await fetch(fullURL, {
-        ...restConfig,
-        body: serializedBody,
-        headers: requestHeaders,
-        signal: combineSignals(signal, timeoutSignal),
-      });
+      rawResponse = await fetch(request);
     } catch (error) {
       throw toRequestError(error, signal, timeoutSignal);
     }
@@ -137,8 +138,7 @@ class FetchClient {
     try {
       return (await parseResponse(response, responseType)) as TResponse;
     } catch (error) {
-      if (error instanceof FetchClientError) throw error;
-      throw toRequestError(error, signal, timeoutSignal);
+      throw toParseError(error, response, signal, timeoutSignal);
     }
   }
 

@@ -24,19 +24,20 @@ const jsonResponse = (data: unknown, status = 200) =>
 const statusResponse = (status: number, headers?: Record<string, string>) =>
   new Response(null, { status, headers });
 
-const hangingFetch: typeof fetch = (_input, init) =>
+const hangingFetch: typeof fetch = (input) =>
   new Promise((_, reject) => {
-    const signal = init?.signal;
-    if (signal?.aborted) {
+    const { signal } = input as Request;
+    if (signal.aborted) {
       reject(signal.reason);
       return;
     }
-    signal?.addEventListener("abort", () => reject(signal.reason), {
+    signal.addEventListener("abort", () => reject(signal.reason), {
       once: true,
     });
   });
 
-const lastInit = () => fetchMock.mock.calls.at(-1)?.[1];
+const requests = () => fetchMock.mock.calls.map(([input]) => input as Request);
+const lastRequest = () => fetchMock.mock.calls.at(-1)?.[0] as Request;
 
 const captureError = async (promise: Promise<unknown>) => {
   try {
@@ -56,7 +57,7 @@ describe("버그 회귀", () => {
 
     await client.get(ENDPOINT, { headers: { "X-Mode": "request" } });
 
-    const headers = new Headers(lastInit()?.headers);
+    const { headers } = lastRequest();
     expect(headers.get("X-Mode")).toBe("request");
     expect(headers.get("X-Client")).toBe("web");
   });
@@ -67,7 +68,7 @@ describe("버그 회귀", () => {
 
     await client.get("/users");
 
-    expect(fetchMock.mock.calls[0][0]).toBe("https://api.example.com/v1/users");
+    expect(lastRequest().url).toBe("https://api.example.com/v1/users");
   });
 
   it("HTML 본문의 502 응답도 HTTP_ERROR로 분류하고 원문을 cause에 담는다", async () => {
@@ -118,6 +119,33 @@ describe("에러 분류", () => {
     expect(error.cause).toBe(networkError);
   });
 
+  it.each([
+    {
+      name: "GET 요청의 body",
+      send: (client: FetchClient) => client.get(ENDPOINT, { body: { q: 1 } }),
+    },
+    {
+      name: "JSON으로 직렬화할 수 없는 body",
+      send: (client: FetchClient) => client.put(ENDPOINT, { body: { id: 1n } }),
+    },
+    {
+      name: "SharedArrayBuffer 기반 body",
+      send: (client: FetchClient) =>
+        client.put(ENDPOINT, { body: new Uint8Array(new SharedArrayBuffer(4)) }),
+    },
+  ])(
+    "$name는 REQUEST_BUILD_ERROR로 분류하고 요청을 보내지 않는다",
+    async ({ send }) => {
+      const client = new FetchClient({ retry: noDelay });
+
+      const error = await captureError(send(client));
+
+      expect(error.type).toBe("REQUEST_BUILD_ERROR");
+      expect(error.cause).toBeInstanceOf(TypeError);
+      expect(fetchMock).not.toHaveBeenCalled();
+    }
+  );
+
   it("잘못된 JSON 응답은 PARSE_ERROR로 분류하고 재시도하지 않는다", async () => {
     fetchMock.mockImplementation(
       async () => new Response("not json", { status: 200 })
@@ -129,6 +157,61 @@ describe("에러 분류", () => {
     expect(error.type).toBe("PARSE_ERROR");
     expect(error.status).toBe(200);
     expect(fetchMock).toHaveBeenCalledOnce();
+  });
+
+  it("responseType과 맞지 않는 응답은 PARSE_ERROR로 분류하고 재시도하지 않는다", async () => {
+    fetchMock.mockImplementation(async () => jsonResponse({ ok: true }));
+    const client = new FetchClient({ retry: noDelay });
+
+    const error = await captureError(
+      client.get(ENDPOINT, { responseType: "formData" })
+    );
+
+    expect(error.type).toBe("PARSE_ERROR");
+    expect(error.cause).toBeInstanceOf(TypeError);
+    expect(fetchMock).toHaveBeenCalledOnce();
+  });
+
+  it("afterResponse 훅이 본문을 먼저 읽으면 PARSE_ERROR로 분류하고 재시도하지 않는다", async () => {
+    fetchMock.mockImplementation(async () => jsonResponse({ ok: true }));
+    const client = new FetchClient({
+      retry: noDelay,
+      hooks: {
+        afterResponse: [
+          async (response) => {
+            await response.json();
+            return response;
+          },
+        ],
+      },
+    });
+
+    const error = await captureError(client.get(ENDPOINT));
+
+    expect(error.type).toBe("PARSE_ERROR");
+    expect(fetchMock).toHaveBeenCalledOnce();
+  });
+
+  it("응답 본문을 받다가 연결이 끊기면 NETWORK_ERROR로 분류하고 재시도한다", async () => {
+    const disconnectedResponse = () =>
+      new Response(
+        new ReadableStream({
+          start(controller) {
+            controller.error(new TypeError("terminated"));
+          },
+        })
+      );
+    fetchMock
+      .mockImplementationOnce(async () => disconnectedResponse())
+      .mockImplementationOnce(async () => jsonResponse({ id: 1 }));
+    const beforeRetry = vi.fn();
+    const client = new FetchClient({
+      retry: noDelay,
+      hooks: { beforeRetry: [beforeRetry] },
+    });
+
+    await expect(client.get(ENDPOINT)).resolves.toEqual({ id: 1 });
+    expect(beforeRetry.mock.calls[0][0].error.type).toBe("NETWORK_ERROR");
   });
 
   it("HTTP 에러의 JSON 본문을 cause에 담는다", async () => {
@@ -170,28 +253,35 @@ describe("타임아웃", () => {
     expect(error.type).toBe("TIMEOUT_ERROR");
   });
 
-  it("기본으로 타임아웃 signal을 붙이고, timeout: false면 붙이지 않는다", async () => {
+  it("기본으로 10초 타임아웃을 적용하고, timeout: false면 적용하지 않는다", async () => {
     fetchMock.mockImplementation(async () => jsonResponse({}));
+    const timeoutSpy = vi.spyOn(AbortSignal, "timeout");
     const client = new FetchClient();
 
     await client.get(ENDPOINT);
-    expect(lastInit()?.signal).toBeInstanceOf(AbortSignal);
+    expect(timeoutSpy).toHaveBeenCalledExactlyOnceWith(10_000);
 
+    timeoutSpy.mockClear();
     await client.get(ENDPOINT, { timeout: false });
-    expect(lastInit()?.signal).toBeUndefined();
+    expect(timeoutSpy).not.toHaveBeenCalled();
+
+    timeoutSpy.mockRestore();
   });
 
   it("타임아웃은 시도마다 새로 적용되고 멱등 메서드에서 재시도한다", async () => {
+    let retrySignalAborted: boolean | undefined;
     fetchMock
       .mockImplementationOnce(hangingFetch)
-      .mockImplementationOnce(async () => jsonResponse({ ok: true }));
+      .mockImplementationOnce(async (input) => {
+        retrySignalAborted = (input as Request).signal.aborted;
+        return jsonResponse({ ok: true });
+      });
     const client = new FetchClient({ timeout: 20, retry: noDelay });
 
     await expect(client.get(ENDPOINT)).resolves.toEqual({ ok: true });
     expect(fetchMock).toHaveBeenCalledTimes(2);
-    expect(fetchMock.mock.calls[0][1]?.signal).not.toBe(
-      fetchMock.mock.calls[1][1]?.signal
-    );
+    expect(requests()[0].signal.aborted).toBe(true);
+    expect(retrySignalAborted).toBe(false);
   });
 });
 
@@ -395,8 +485,8 @@ describe("리트라이", () => {
       id: 1,
     });
 
-    const authorizations = fetchMock.mock.calls.map(([, init]) =>
-      new Headers(init?.headers).get("Authorization")
+    const authorizations = requests().map((request) =>
+      request.headers.get("Authorization")
     );
     expect(authorizations).toEqual(["Bearer expired", "Bearer refreshed"]);
   });

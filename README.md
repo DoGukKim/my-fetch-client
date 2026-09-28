@@ -54,7 +54,7 @@ FetchClient
 │   ├── mergeConfig         # 설정 병합 (헤더, retry 옵션)
 │   ├── send()              # 한 번의 시도
 │   │   ├── buildFullURL    # URL 생성 + 쿼리 파라미터
-│   │   ├── serializeBody   # 본문 직렬화
+│   │   ├── buildRequest    # 본문 직렬화 + Request 생성
 │   │   └── combineSignals  # 타임아웃 signal + 사용자 signal
 │   └── retry               # 재시도 판단, 백오프/Retry-After 대기
 │
@@ -143,18 +143,20 @@ await client.post("/orders", { body, retry: { methods: ["POST"] } }); // POST �
 - `retry: 3`은 `{ limit: 3 }`과 같고, `retry: false`는 재시도를 끕니다.
 - 요청별 `retry` 객체는 클라이언트 기본값과 깊게 병합됩니다.
 - 네트워크 오류와 타임아웃도 재시도합니다. 사용자 취소와 `ReadableStream` body는 재시도하지 않습니다.
+- `URL_BUILD_ERROR`, `REQUEST_BUILD_ERROR`, `PARSE_ERROR`처럼 다시 보내도 결과가 같은 에러는 재시도하지 않습니다.
 - 응답에 `Retry-After` 헤더가 있으면 `delay`보다 우선합니다.
 
 ### 에러 처리
 
-| 타입              | 발생 상황                                   | 호출되는 훅       |
-| ----------------- | ------------------------------------------- | ----------------- |
-| `HTTP_ERROR`      | 2xx가 아닌 응답 (`status`, `response` 포함) | `onResponseError` |
-| `NETWORK_ERROR`   | 연결 실패 등 네트워크 오류                  | `onRequestError`  |
-| `TIMEOUT_ERROR`   | `timeout` 초과                              | `onRequestError`  |
-| `ABORT_ERROR`     | 사용자가 `signal`로 취소                    | 없음              |
-| `PARSE_ERROR`     | 응답 본문 JSON 파싱 실패                    | `onRequestError`  |
-| `URL_BUILD_ERROR` | 잘못된 URL                                  | `onRequestError`  |
+| 타입                  | 발생 상황                                                       | 호출되는 훅       |
+| --------------------- | --------------------------------------------------------------- | ----------------- |
+| `HTTP_ERROR`          | 2xx가 아닌 응답 (`status`, `response` 포함)                     | `onResponseError` |
+| `NETWORK_ERROR`       | 연결 실패 등 네트워크 오류                                      | `onRequestError`  |
+| `TIMEOUT_ERROR`       | `timeout` 초과                                                  | `onRequestError`  |
+| `ABORT_ERROR`         | 사용자가 `signal`로 취소                                        | 없음              |
+| `PARSE_ERROR`         | 응답 본문 처리 실패 (JSON 파싱, `responseType` 불일치 등)       | `onRequestError`  |
+| `URL_BUILD_ERROR`     | 잘못된 URL                                                      | `onRequestError`  |
+| `REQUEST_BUILD_ERROR` | 요청을 만들 수 없음 (GET 요청의 body, 직렬화할 수 없는 body 등) | `onRequestError`  |
 
 - 에러 훅은 재시도가 모두 끝난 뒤 최종 실패 때 한 번만 호출됩니다.
 - `HTTP_ERROR`의 `cause`에는 에러 응답 본문이 담깁니다. JSON이면 파싱한 값, 아니면 원문 텍스트입니다.

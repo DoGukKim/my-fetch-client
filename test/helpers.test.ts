@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import FetchClientError from "../src/fetchClientError";
 import {
   buildFullURL,
+  isNetworkError,
   mergeConfig,
   parseResponse,
   readErrorBody,
@@ -108,5 +109,32 @@ describe("readErrorBody", () => {
       "<html>502</html>"
     );
     expect(await readErrorBody(new Response(""))).toBeNull();
+  });
+});
+
+describe("isNetworkError", () => {
+  it("런타임별 fetch 네트워크 오류 메시지만 네트워크 오류로 본다", () => {
+    expect(isNetworkError(new TypeError("fetch failed"))).toBe(true);
+    expect(isNetworkError(new TypeError("terminated"))).toBe(true);
+    expect(isNetworkError(new TypeError("Failed to fetch"))).toBe(true);
+    expect(isNetworkError(new TypeError("Failed to fetch (example.com)"))).toBe(
+      true
+    );
+
+    expect(
+      isNetworkError(
+        new TypeError("Request with GET/HEAD method cannot have body.")
+      )
+    ).toBe(false);
+    expect(isNetworkError(new Error("fetch failed"))).toBe(false);
+  });
+
+  it("Safari의 'Load failed'는 stack이 없을 때만 네트워크 오류로 본다", () => {
+    const safariError = Object.assign(new TypeError("Load failed"), {
+      stack: undefined,
+    });
+
+    expect(isNetworkError(safariError)).toBe(true);
+    expect(isNetworkError(new TypeError("Load failed"))).toBe(false);
   });
 });

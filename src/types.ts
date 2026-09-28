@@ -41,6 +41,7 @@ export type FetchClientMergedConfig = Omit<
 
 export type FetchClientErrorType =
   | "URL_BUILD_ERROR"
+  | "REQUEST_BUILD_ERROR"
   | "HTTP_ERROR"
   | "NETWORK_ERROR"
   | "TIMEOUT_ERROR"
