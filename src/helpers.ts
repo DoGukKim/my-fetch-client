@@ -298,19 +298,17 @@ export const toRequestError = (
   );
 };
 
-// 런타임별 fetch 네트워크 오류 메시지 (https://github.com/sindresorhus/is-network-error 참고)
 const NETWORK_ERROR_MESSAGES = new Set([
-  "network error", // Chrome
-  "NetworkError when attempting to fetch resource.", // Firefox
-  "The Internet connection appears to be offline.", // Safari 16
-  "Network request failed", // cross-fetch
-  "fetch failed", // Node.js (undici)
-  "terminated", // Node.js (undici)
-  " A network error occurred.", // Bun (앞의 공백 포함)
-  "Network connection lost", // Cloudflare Workers
+  "network error",
+  "NetworkError when attempting to fetch resource.",
+  "The Internet connection appears to be offline.",
+  "Network request failed",
+  "fetch failed",
+  "terminated",
+  " A network error occurred.",
+  "Network connection lost",
 ]);
 
-// "Failed to fetch (example.com)"처럼 호스트명이 붙는 형태도 허용한다.
 const matchesMessage = (message: string, expected: string) =>
   message === expected ||
   (message.startsWith(`${expected} (`) && message.endsWith(")"));
@@ -320,14 +318,13 @@ export const isNetworkError = (error: unknown): error is TypeError => {
 
   const { message } = error;
 
-  // Safari 17+는 메시지가 일반적이라, 네트워크 오류에만 stack이 없다는 점으로 구분한다.
   if (matchesMessage(message, "Load failed")) {
     return error.stack === undefined;
   }
 
   return (
-    matchesMessage(message, "Failed to fetch") || // Chrome
-    message.startsWith("error sending request for url") || // Deno
+    matchesMessage(message, "Failed to fetch") ||
+    message.startsWith("error sending request for url") ||
     NETWORK_ERROR_MESSAGES.has(message)
   );
 };
@@ -340,7 +337,6 @@ export const toParseError = (
 ): FetchClientError => {
   if (error instanceof FetchClientError) return error;
 
-  // 본문을 받는 도중의 취소, 타임아웃, 연결 끊김은 파싱 문제가 아니다.
   if (userSignal?.aborted || timeoutSignal?.aborted || isNetworkError(error)) {
     return toRequestError(error, userSignal, timeoutSignal);
   }
